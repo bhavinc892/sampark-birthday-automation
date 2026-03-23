@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const axios = require("axios");
 const cron = require("node-cron");
+const puppeteer = require("puppeteer");
 
 // ===== CONFIG =====
 const SAMPARK_USERNAME = process.env.SAMPARK_USERNAME;
@@ -46,39 +47,52 @@ function logAxiosError(context, err) {
 
 // ===== API CALLS =====
 /**
- * Logs in to Sampark and returns the session token from the response body.
+ * Logs in to Sampark using Puppeteer and returns the session token from the response body.
  *
  * @returns {Promise<string|undefined>} Auth token, or undefined if not present or on request failure.
  */
 async function getToken() {
+  let browser;
   try {
-    const res = await axios.post(
-      "https://m.sampark369.org/v1/auth/user/login",
-      {
-        userName: SAMPARK_USERNAME,
-        passCode: SAMPARK_PASSWORD,
-        remember: "true",
-      },
-    );
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    const page = await browser.newPage();
 
-    const token =
-      res.data?.data?.token ||
-      res.data?.token ||
-      res.data?.result?.token;
+    await page.goto("https://m.sampark369.org/v1/auth/user/login", {
+      waitUntil: "networkidle2",
+    });
 
-    if (!token) {
-      console.warn("[Sampark login] No token in response", {
-        topLevelKeys:
-          res.data && typeof res.data === "object"
-            ? Object.keys(res.data)
-            : typeof res.data,
+    // Use Puppeteer to send a POST request to the login endpoint
+    const response = await page.evaluate(async (url, username, password) => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userName: username,
+          passCode: password,
+        }),
       });
+      return res.json();
+    }, "https://m.sampark369.org/v1/auth/user/login", SAMPARK_USERNAME, SAMPARK_PASSWORD);
+
+    // Extract the token from the response
+    if (!response || !response.result || !response.result.token) {
+      console.error("[Sampark login] No token found in the response.");
+      return undefined;
     }
 
-    return token;
+    return response.result.token;
   } catch (err) {
-    logAxiosError("Sampark login", err);
+    console.error("[Sampark login] Puppeteer error:", err);
     return undefined;
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 
