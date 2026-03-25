@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const axios = require("axios");
 const cron = require("node-cron");
-// const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer");
 
 // ===== CONFIG =====
 const SAMPARK_USERNAME = process.env.SAMPARK_USERNAME;
