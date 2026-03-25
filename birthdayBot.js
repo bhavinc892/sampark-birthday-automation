@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const axios = require("axios");
 const cron = require("node-cron");
-const puppeteer = require("puppeteer");
+// const puppeteer = require("puppeteer");
 
 // ===== CONFIG =====
 const SAMPARK_USERNAME = process.env.SAMPARK_USERNAME;
@@ -51,37 +51,73 @@ function logAxiosError(context, err) {
  *
  * @returns {Promise<string|undefined>} Auth token, or undefined if not present or on request failure.
  */
+
 async function getToken() {
   let browser;
   try {
     browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      headless: "new", // ✅ use modern headless
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+      ],
     });
+
     const page = await browser.newPage();
 
-    await page.goto("https://m.sampark369.org/v1/auth/user/login", {
+    // ✅ Set real browser user agent at page level (VERY IMPORTANT)
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    );
+
+    // ✅ Set viewport (Cloudflare checks this sometimes)
+    await page.setViewport({
+      width: 1366,
+      height: 768,
+    });
+
+    // ✅ Enable cookies/session properly
+    await page.setExtraHTTPHeaders({
+      "accept-language": "en-US,en;q=0.9",
+    });
+
+    // ✅ First visit homepage (establish cookies + pass CF checks)
+    await page.goto("https://m.sampark369.org", {
       waitUntil: "networkidle2",
     });
 
-    // Use Puppeteer to send a POST request to the login endpoint
-    const response = await page.evaluate(async (url, username, password) => {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userName: username,
-          passCode: password,
-        }),
-      });
-      return res.json();
-    }, "https://m.sampark369.org/v1/auth/user/login", SAMPARK_USERNAME, SAMPARK_PASSWORD);
+    // Optional: wait a bit for Cloudflare JS to complete
+    await new Promise((r) => setTimeout(r, 5000));
 
-    // Extract the token from the response
-    if (!response || !response.result || !response.result.token) {
-      console.error("[Sampark login] No token found in the response.");
+    // ✅ Now call login API from inside browser context
+    const response = await page.evaluate(
+      async (url, username, password) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/plain, */*",
+          },
+          body: JSON.stringify({
+            userName: username,
+            passCode: password,
+            remember: "true",
+          }),
+        });
+
+        try {
+          return await res.json();
+        } catch (e) {
+          return { error: "Invalid JSON response" };
+        }
+      },
+      "https://m.sampark369.org/v1/auth/user/login",
+      SAMPARK_USERNAME,
+      SAMPARK_PASSWORD
+    );
+
+    if (!response?.result?.token) {
+      console.error("[Sampark login] No token found", response);
       return undefined;
     }
 
@@ -90,12 +126,9 @@ async function getToken() {
     console.error("[Sampark login] Puppeteer error:", err);
     return undefined;
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    if (browser) await browser.close();
   }
 }
-
 /**
  * Fetches today’s birthday list from the Sampark API.
  *
