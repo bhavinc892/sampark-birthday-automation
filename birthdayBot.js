@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const axios = require("axios");
 const cron = require("node-cron");
-const puppeteer = require("puppeteer");
 
 // ===== CONFIG =====
 const SAMPARK_USERNAME = process.env.SAMPARK_USERNAME;
@@ -11,97 +10,33 @@ const SAMPARK_PASSWORD = process.env.SAMPARK_PASSWORD;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 
-/**
- * Logs Axios (and other) errors with HTTP status and response body when available.
- *
- * @param {string} context Short label for each log line (e.g. `Sampark login`).
- * @param {unknown} err
- */
-function logAxiosError(context, err) {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data;
-    let dataStr;
-    if (data !== undefined) {
-      dataStr =
-        typeof data === "object" ? JSON.stringify(data) : String(data);
-    }
-    console.error(`[${context}] Request failed`, {
-      status: err.response?.status ?? null,
-      statusText: err.response?.statusText ?? null,
-      message: err.message,
-      responseData: dataStr,
-    });
-    return;
-  }
-  console.error(`[${context}]`, err);
-}
-
-/**
- * Member shape returned by the Sampark birthdays API (fields vary by record).
- *
- * @typedef {object} BirthdayMember
- * @property {string} [firstName]
- * @property {string} [lastName]
- * @property {string} [name]
- */
-
-// ===== API CALLS =====
-/**
- * Logs in to Sampark using Puppeteer and returns the session token from the response body.
- *
- * @returns {Promise<string|undefined>} Auth token, or undefined if not present or on request failure.
- */
 async function getToken() {
-  let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-    const page = await browser.newPage();
+    const res = await axios.post(
+      "https://m.sampark369.org/v1/auth/user/login",
+      {
+        userName: SAMPARK_USERNAME,
+        passCode: SAMPARK_PASSWORD,
+      },
+      {
+        headers: { "Content-Type": "application/json" },
+      }
+    );
 
-    await page.goto("https://m.sampark369.org/v1/auth/user/login", {
-      waitUntil: "networkidle2",
-    });
-
-    // Use Puppeteer to send a POST request to the login endpoint
-    const response = await page.evaluate(async (url, username, password) => {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userName: username,
-          passCode: password,
-        }),
-      });
-      return res.json();
-    }, "https://m.sampark369.org/v1/auth/user/login", SAMPARK_USERNAME, SAMPARK_PASSWORD);
-
-    // Extract the token from the response
-    if (!response || !response.result || !response.result.token) {
+    const token = res.data?.result?.token;
+    if (!token) {
       console.error("[Sampark login] No token found in the response.");
       return undefined;
     }
 
-    return response.result.token;
-  } catch (err) {
-    console.error("[Sampark login] Puppeteer error:", err);
+    console.log("[Sampark login] Token received successfully.");
+    return token;
+  } catch (error) {
+    console.error("[Sampark login] Error:", error);
     return undefined;
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
   }
 }
 
-/**
- * Fetches today’s birthday list from the Sampark API.
- *
- * @param {string} token Session token from {@link getToken}.
- * @returns {Promise<BirthdayMember[]>} Array of members; empty if none, missing `data`, or on failure.
- */
 async function getBirthdays(token) {
   try {
     const res = await axios.get(
@@ -113,20 +48,22 @@ async function getBirthdays(token) {
       },
     );
 
-    return res.data?.data || [];
-  } catch (err) {
-    logAxiosError("Sampark birthdays", err);
+    const birthdays = res.data?.data || [];
+    console.log(`[Sampark birthdays] Fetched ${birthdays.length} birthday(s).`);
+    return birthdays;
+  } catch (error) {
+    if (error.response) {
+      console.error(
+        `[Sampark birthdays] HTTP ${error.response.status}:`,
+        error.response.data
+      );
+    } else {
+      console.error("[Sampark birthdays] Error:", error.message);
+    }
     return [];
   }
 }
 
-// ===== MESSAGE FORMAT =====
-/**
- * Builds the birthday greeting text sent to Telegram.
- *
- * @param {BirthdayMember[]|null|undefined} list Members with birthdays today.
- * @returns {string|null} Formatted message, or `null` if there is nothing to send.
- */
 function formatMessage(list) {
   if (!list || !list.length) return null;
 
@@ -145,13 +82,6 @@ function formatMessage(list) {
   return `${header} ${lines} 🎂🍰🎉🎊🥳`;
 }
 
-// ===== TELEGRAM SEND =====
-/**
- * Sends plain text to the configured Telegram chat using the Bot API.
- *
- * @param {string} message Body to send as `text`.
- * @returns {Promise<boolean>} `true` if Telegram accepted the message, `false` on config or HTTP error.
- */
 async function sendTelegramMessage(message) {
   if (!BOT_TOKEN || !CHAT_ID) {
     console.error(
@@ -171,18 +101,11 @@ async function sendTelegramMessage(message) {
     console.log("[Telegram] Message sent successfully");
     return true;
   } catch (err) {
-    logAxiosError("Telegram sendMessage", err);
+    console.error("[Telegram sendMessage] Error:", err);
     return false;
   }
 }
 
-// ===== MAIN =====
-/**
- * End-to-end job: login, load birthdays, format message, send via Telegram.
- * Logs errors to the console and exits early when credentials, token, or birthdays are missing.
- *
- * @returns {Promise<boolean>} `true` if the job finished without a hard failure; `false` on config, auth, send, or unexpected errors.
- */
 async function run() {
   try {
     if (!SAMPARK_USERNAME || !SAMPARK_PASSWORD) {
@@ -190,7 +113,7 @@ async function run() {
       return false;
     }
 
-    console.log("Running Birthday Job...");
+    console.log(`[Birthday job] Starting at ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}...`);
 
     const token = await getToken();
     if (!token) {
@@ -203,10 +126,9 @@ async function run() {
     const list = await getBirthdays(token);
 
     const message = formatMessage(list);
-    console.log(message);
 
     if (!message) {
-      console.log("No birthdays today");
+      console.log(`[Birthday job] No birthdays found for today (${new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}).`);
       return true;
     }
 
@@ -235,7 +157,6 @@ if (isGitHubActions) {
       process.exit(1);
     });
 } else {
-  // ===== CRON (Every 30 seconds) =====
   cron.schedule(
     "*/30 * * * * *",
     () => {
