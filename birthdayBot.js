@@ -10,6 +10,19 @@ const SAMPARK_PASSWORD = process.env.SAMPARK_PASSWORD;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 
+// ===== BROWSER-LIKE HEADERS =====
+// Mimic a real mobile Chrome browser to avoid bot detection.
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  Origin: "https://m.sampark369.org",
+  Referer: "https://m.sampark369.org/",
+  Connection: "keep-alive",
+};
+
 async function getToken() {
   try {
     const res = await axios.post(
@@ -19,7 +32,10 @@ async function getToken() {
         passCode: SAMPARK_PASSWORD,
       },
       {
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          ...BROWSER_HEADERS,
+          "Content-Type": "application/json",
+        },
       }
     );
 
@@ -43,6 +59,8 @@ async function getBirthdays(token) {
       "https://m.sampark369.org/v1/sam2api/member/birthdays",
       {
         headers: {
+          ...BROWSER_HEADERS,
+          "Content-Type": "application/json",
           token: token,
         },
       },
